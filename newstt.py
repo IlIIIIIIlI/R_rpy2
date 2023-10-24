@@ -787,6 +787,8 @@ class FileProcessor:
     def generate_word(self):
         doc = Document()
         time_pattern = re.compile(r"\d{2}:\d{2}:\d{2}")
+        number_pattern = re.compile(r"(?<!\d)(\d{1}\.)(?!\d)")  # 匹配前后都没有其他数字的序号
+        # number_pattern = re.compile(r"(?<!\d)(\d+\.)")  # 正则表达式，查找独立的序号
         current_heading = None
         for _, row in self.df.iterrows():
             text = row["text"]
@@ -794,8 +796,10 @@ class FileProcessor:
                 current_heading = doc.add_heading(text, level=2)
             else:
                 if current_heading:
+                    # 处理段落中的序号
+                    processed_text = number_pattern.sub(r"\n\1", text)
                     p = doc.add_paragraph()
-                    p.add_run(text)
+                    p.add_run(processed_text)
         today = datetime.now()
         weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期天"]
         weekday_str = weekdays[today.weekday()]
@@ -804,7 +808,16 @@ class FileProcessor:
         doc.save(self.filename)
 
 
+from multiprocessing import Pool, current_process
+
 app = Flask(__name__)
+
+
+def r_code_execution(file_path):
+    print("Process ID: ", current_process().pid)
+    processor = FileProcessor(file_path)
+    processor.generate_word()
+    return processor.filename
 
 
 @app.route("/")
@@ -813,6 +826,7 @@ def index():
 
 
 import uuid
+from multiprocessing import Pool
 
 
 @app.route("/upload", methods=["POST"])
@@ -829,11 +843,14 @@ def upload_file():
     file_path = os.path.join("uploads", unique_filename)
     file.save(file_path)
 
-    processor = FileProcessor(file_path)
-    processor.generate_word()
+    # 使用进程池来运行R代码
+    with Pool() as pool:
+        result = pool.apply_async(r_code_execution, (file_path,))
+        filename = result.get()  # 等待结果
 
-    return send_file(processor.filename, as_attachment=True)
+    # 发送生成的Word文档作为附件
+    return send_file(filename, as_attachment=True)
 
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True, threaded=False)
+# if __name__ == "__main__":
+#     app.run(host="0.0.0.0", port=5000, debug=True, threaded=False)
